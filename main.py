@@ -18,6 +18,8 @@ from api.javascript_exec_api import javascript_exec_api
 from api.section import section_api
 from api.persona_api import persona_api
 from api.pfp import pfp_api
+from api.identify_api import identify_api_blueprint
+
 from api.analytics import analytics_api
 from api.student import student_api
 from api.groq_api import groq_api
@@ -71,6 +73,8 @@ app.register_blueprint(user_api)
 app.register_blueprint(section_api)
 app.register_blueprint(persona_api)
 app.register_blueprint(pfp_api) 
+app.register_blueprint(identify_api_blueprint)
+ 
 app.register_blueprint(groq_api)
 app.register_blueprint(gemini_api)
 app.register_blueprint(microblog_api)
