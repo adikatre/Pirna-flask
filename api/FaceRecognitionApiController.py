@@ -12,7 +12,11 @@ def identify():
             return jsonify({'message': 'No image provided'}), 400
 
         # Controller only calls the orchestrator
-        result = FaceRecognitionService.identify_face_workflow(data['image'])
+        threshold = data.get('threshold')
+        if threshold is not None:
+            threshold = float(threshold)
+            
+        result = FaceRecognitionService.identify_face_workflow(data['image'], threshold=threshold)
         
         return jsonify(result), 200
 
@@ -30,9 +34,10 @@ def register():
             return jsonify({'message': 'Image and label required'}), 400
 
         # Controller only calls the orchestrator
-        file_path = FaceRecognitionService.register_face_workflow(data['label'], data['image'])
+        embedding = FaceRecognitionService.register_face_workflow(data['label'], data['image'])
         
-        return jsonify({'message': 'Face registered successfully', 'path': file_path}), 200
+        return jsonify({'message': 'Face registered successfully', 'embedding': embedding}), 200
+
 
     except ValueError as e:
         return jsonify({'message': str(e)}), 400
