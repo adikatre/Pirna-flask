@@ -16,7 +16,9 @@ def identify():
         if threshold is not None:
             threshold = float(threshold)
             
-        result = FaceRecognitionService.identify_face_workflow(data['image'], threshold=threshold)
+        token = request.headers.get('Authorization')
+        result = FaceRecognitionService.identify_face_workflow(data['image'], threshold=threshold, token=token)
+
         
         return jsonify(result), 200
 
