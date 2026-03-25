@@ -11,12 +11,16 @@ def identify():
         if not data or 'image' not in data:
             return jsonify({'message': 'No image provided'}), 400
 
-        # Controller only calls the orchestrator
+        # Get Spring JWT token from cookies
+        spring_token = request.cookies.get('jwt_java_spring')
+        if not spring_token:
+            return jsonify({'message': 'Authentication required'}), 401
+
         threshold = data.get('threshold')
         if threshold is not None:
             threshold = float(threshold)
             
-        token = request.headers.get('Authorization')
+        token = f"Bearer {spring_token}"
         result = FaceRecognitionService.identify_face_workflow(data['image'], threshold=threshold, token=token)
 
         

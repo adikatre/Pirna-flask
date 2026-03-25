@@ -94,20 +94,42 @@ class FaceRecognitionService:
 
             # Fetch existing faces from Spring (Centralized Storage)
             spring_url = "http://localhost:8585/api/person/faces"
-            headers = {}
-            if token:
-                headers['Authorization'] = token
-                
+            headers = {
+                'Content-Type': 'application/json'
+            }
+            
+            # Extract token from "Bearer <token>" format
+            jwt_token = None
+            if token and token.startswith('Bearer '):
+                jwt_token = token[7:]  # Remove "Bearer " prefix
+            
             try:
-                resp = requests.get(spring_url, headers=headers, timeout=5)
-                if resp.status_code != 200:
-                    return {'match': False, 'message': f'Spring API error: {resp.status_code}'}
+                print(f"Fetching faces from Spring: {spring_url}")
+                print(f"JWT token present: {jwt_token is not None}")
+                
+                # Create a session to handle cookies
+                import requests
+                session = requests.Session()
+                
+                # Set the JWT token as a cookie
+                if jwt_token:
+                    session.cookies.set('jwt_java_spring', jwt_token, domain='localhost', path='/')
+                
+                resp = session.get(spring_url, headers=headers, timeout=5)
+                print(f"Spring API error response: {resp.text}")
+                return {'match': False, 'message': f'Spring API error: {resp.status_code}'}
+                
                 faces_data = resp.json()
+                print(f"Successfully fetched {len(faces_data)} faces from Spring")
             except Exception as e:
+                print(f"Connection error to Spring: {str(e)}")
                 return {'match': False, 'message': f'Connection error to Spring: {str(e)}'}
 
 
             print(f"Comparing current face with {len(faces_data)} stored faces.")
+
+            min_dist = float('inf')
+            best_match = None
 
             for face in faces_data:
                 stored_data = face.get('faceData')
