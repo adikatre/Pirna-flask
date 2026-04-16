@@ -116,8 +116,9 @@ class FaceRecognitionService:
                     session.cookies.set('jwt_java_spring', jwt_token, domain='localhost', path='/')
                 
                 resp = session.get(spring_url, headers=headers, timeout=5)
-                print(f"Spring API error response: {resp.text}")
-                return {'match': False, 'message': f'Spring API error: {resp.status_code}'}
+                if resp.status_code != 200:
+                    print(f"Spring API error response: {resp.text}")
+                    return {'match': False, 'message': f'Spring API error: {resp.status_code}'}
                 
                 faces_data = resp.json()
                 print(f"Successfully fetched {len(faces_data)} faces from Spring")
