@@ -16,13 +16,11 @@ api = Api(persona_api)
 def _clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
-
 def _safe_int(v, default):
     try:
         return int(v)
     except Exception:
         return default
-
 
 def _normalize_feedback_rows(rows):
     """
@@ -69,7 +67,6 @@ def _normalize_feedback_rows(rows):
 
     return cleaned
 
-
 def _feedback_to_pair_delta(feedback_rows, alpha=2.0):
     """
     Learn persona-pair adjustments:
@@ -79,15 +76,13 @@ def _feedback_to_pair_delta(feedback_rows, alpha=2.0):
     Returns dict[(p1,p2)] = delta
     """
     from collections import defaultdict
-
     pair_delta = defaultdict(float)
+
     rows = _normalize_feedback_rows(feedback_rows)
 
     for r in rows:
         personas = r["personas"]
-        avg = (
-            float(r["student_rating_1to5"]) + float(r["teacher_rating_1to5"])
-        ) / 2.0  # 1..5
+        avg = (float(r["student_rating_1to5"]) + float(r["teacher_rating_1to5"])) / 2.0  # 1..5
         centered = avg - 3.0  # -2..+2
         delta = centered * alpha
 
@@ -99,12 +94,11 @@ def _feedback_to_pair_delta(feedback_rows, alpha=2.0):
 
     return dict(pair_delta)
 
-
 def _extract_primary_student_alias(user_id):
     """
     Pick the most "important" student persona for a user:
       - highest weight wins
-      - if tie, latest selected_at wins
+      - if tie, latest selected_at wins (optional; weight is the big signal)
     Returns alias or None.
     """
     ups = (
@@ -117,13 +111,13 @@ def _extract_primary_student_alias(user_id):
     if not ups:
         return None
 
+    # Highest weight first; if same weight, newest selection first
     ups_sorted = sorted(
         ups,
         key=lambda up: (up.weight or 0, up.selected_at or 0),
         reverse=True
     )
     return ups_sorted[0].persona._alias
-
 
 def _team_feedback_adjustment(student_aliases, pair_delta, max_bonus=15.0):
     """
@@ -140,46 +134,29 @@ def _team_feedback_adjustment(student_aliases, pair_delta, max_bonus=15.0):
 
     return _clamp(total, -max_bonus, max_bonus)
 
-
-def _build_group_personas_list(group_users):
-    """
-    Build the persona list structure required by UserPersona.calculate_team_score().
-    """
-    group_personas_list = []
-
-    for user in group_users:
-        personas = UserPersona.query.filter_by(user_id=user.id).all()
-        if personas:
-            group_personas_list.append(personas)
-
-    return group_personas_list
-
-
-def _calculate_base_team_score(group_users):
-    """
-    Calculate the original compatibility score with no learned feedback.
-    """
-    group_personas_list = _build_group_personas_list(group_users)
-    if not group_personas_list:
-        return 0.0
-
-    return UserPersona.calculate_team_score(group_personas_list)
-
-
 def _calculate_team_score_with_feedback(group_users, pair_delta):
     """
     base_score = existing UserPersona.calculate_team_score(...)
     adjusted_score = base_score + feedback_adjustment(student persona pairs)
     """
-    base = _calculate_base_team_score(group_users)
+    # Base score using your existing function
+    group_personas_list = []
+    for user in group_users:
+        personas = UserPersona.query.filter_by(user_id=user.id).all()
+        if personas:
+            group_personas_list.append(personas)
 
+    base = UserPersona.calculate_team_score(group_personas_list) if group_personas_list else 0.0
+
+    # Feedback adjustment uses *student* category persona aliases (indy/salem/phoenix/cody)
     student_aliases = []
     for user in group_users:
-        alias = _extract_primary_student_alias(user.id)
-        if alias:
-            student_aliases.append(alias)
+        a = _extract_primary_student_alias(user.id)
+        if a:
+            student_aliases.append(a)
 
     fb = _team_feedback_adjustment(student_aliases, pair_delta, max_bonus=15.0)
+
     return round(_clamp(base + fb, 0.0, 100.0), 2)
 
 
@@ -569,41 +546,107 @@ class PersonaAPI:
                 'members': members_detail,
                 'evaluation': evaluation
             }, 200
-
     class _FormGroups(Resource):
         def post(self):
-            """Form optimal groups based on personas, optionally incorporating prior experiences."""
-            try:
-                body = request.get_json() or {}
-                result = _orchestrate_group_formation(body)
-                return result, 200
+                    """Form optimal groups based on personas, optionally incorporating prior experiences."""
+                    body = request.get_json() or {}
 
-            except ValueError as e:
-                error_code = str(e)
-                return {
-                    "message": GROUP_FORMATION_ERRORS.get(error_code, "Invalid request")
-                }, 400
+                    user_uids = body.get('user_uids', [])
+                    group_size = _safe_int(body.get('group_size', 4), 4)
 
-            except LookupError as e:
-                error_data = e.args[0] if e.args else {}
-                return {
-                    "message": GROUP_FORMATION_ERRORS["USERS_NOT_FOUND"],
-                    "missing_uids": error_data.get("missing_uids", [])
-                }, 404
+                    incorporate = bool(body.get("incorporate_prior_experiences", False))
+                    feedback_rows = body.get("feedback_rows", [])
 
-            except Exception as e:
-                return {
-                    "message": f"Error forming groups: {str(e)}"
-                }, 500
+                    if not user_uids:
+                        return {'message': 'user_uids required'}, 400
+
+                    if len(user_uids) < 2:
+                        return {'message': 'Need at least 2 users'}, 400
+
+                    if group_size < 2 or group_size > 10:
+                        return {'message': 'group_size must be between 2 and 10'}, 400
+
+                    # Query users by _uid
+                    users = User.query.filter(User._uid.in_(user_uids)).all()
+                    if len(users) != len(user_uids):
+                        found_uids = {u.uid for u in users}
+                        missing_uids = list(set(user_uids) - found_uids)
+                        return {'message': 'Some users not found', 'missing_uids': missing_uids}, 404
+
+                    uid_to_user = {u.uid: u for u in users}
+
+                    # Learn feedback adjustments (persona pair deltas)
+                    pair_delta = {}
+                    if incorporate:
+                        try:
+                            pair_delta = _feedback_to_pair_delta(feedback_rows, alpha=2.0)
+                        except Exception:
+                            # fail soft: just ignore feedback if malformed
+                            pair_delta = {}
+
+                    import random
+
+                    best_grouping = None
+                    best_avg_score = -1.0
+
+                    # More iterations helps once feedback influences scoring
+                    iterations = 80 if incorporate else 50
+
+                    for _ in range(iterations):
+                        shuffled = user_uids.copy()
+                        random.shuffle(shuffled)
+
+                        groups = []
+                        remaining = shuffled.copy()
+
+                        while len(remaining) >= group_size:
+                            group_uids = remaining[:group_size]
+                            group_users = [uid_to_user[uid] for uid in group_uids]
+
+                            score = _calculate_team_score_with_feedback(group_users, pair_delta) if pair_delta else \
+                                    (UserPersona.calculate_team_score([
+                                        UserPersona.query.filter_by(user_id=u.id).all() for u in group_users
+                                        if UserPersona.query.filter_by(user_id=u.id).all()
+                                    ]) if group_users else 0.0)
+
+                            groups.append({'user_uids': group_uids, 'team_score': score})
+                            remaining = remaining[group_size:]
+
+                        # leftovers
+                        if remaining:
+                            group_users = [uid_to_user[uid] for uid in remaining]
+
+                            score = _calculate_team_score_with_feedback(group_users, pair_delta) if pair_delta else \
+                                    (UserPersona.calculate_team_score([
+                                        UserPersona.query.filter_by(user_id=u.id).all() for u in group_users
+                                        if UserPersona.query.filter_by(user_id=u.id).all()
+                                    ]) if group_users else 0.0)
+
+                            groups.append({'user_uids': remaining, 'team_score': score})
+
+                        avg_score = sum(g['team_score'] for g in groups) / max(len(groups), 1)
+
+                        if avg_score > best_avg_score:
+                            best_avg_score = avg_score
+                            best_grouping = groups
+
+                    return {
+                        'groups': best_grouping,
+                        'average_score': round(best_avg_score, 2),
+                        'method': 'ai_feedback' if incorporate and pair_delta else 'ai',
+                        'feedback_used': bool(pair_delta),
+                        'learned_pairs': len(pair_delta)
+                    }, 200
+
 
     class _UserPersona(Resource):
         @token_required()
         def post(self):
-            """User selects their persona (replaces existing in same category if any)"""
+            """User selects their persona (replaces existing if any)"""
             body = request.get_json()
             persona_id = body.get('persona_id')
             weight = body.get('weight', 1)
-
+            
             if not persona_id:
                 return {'message': 'persona_id is required'}, 400
 
@@ -616,10 +659,10 @@ class PersonaAPI:
             persona = Persona.query.get(persona_id)
             if not persona:
                 return {'message': 'Persona not found'}, 404
-
+            
             # Get the category of the selected persona
             category = persona.category
-
+            
             # Check if user already has THIS exact persona
             existing = UserPersona.query.filter_by(
                 user_id=current_user.id,
@@ -628,16 +671,16 @@ class PersonaAPI:
 
             if existing:
                 return {'message': 'Persona already selected'}, 200  # Changed to 200, it's OK
-
+            
             # Delete any existing persona in the SAME CATEGORY (not all personas)
             # First get all user's personas
             user_personas = UserPersona.query.filter_by(user_id=current_user.id).all()
-
+            
             # Find and delete any in the same category
             for up in user_personas:
                 if up.persona.category == category:
                     db.session.delete(up)
-
+            
             # Create new assignment
             user_persona = UserPersona(
                 user=current_user,
@@ -648,21 +691,20 @@ class PersonaAPI:
             try:
                 db.session.add(user_persona)
                 db.session.commit()
-                return {'message': 'Persona selected', 'persona_id': persona_id, 'category': category}, 201
+                return {'message': 'Persona selected', 'persona_id': persona_id}, 201
             except Exception as e:
                 db.session.rollback()
                 return {'message': f'Error: {str(e)}'}, 500
-
     class _GetUserPersonas(Resource):
         @token_required()
         def get(self):
             """Get current user's personas grouped by category"""
-            current_user = g.current_user
+            current_user = g.current_user  
             if not current_user:
                 return {'message': 'User not found'}, 404
 
             user_personas = UserPersona.query.filter_by(user_id=current_user.id).all()
-
+            
             # Group personas by category
             personas_by_category = {}
             for up in user_personas:
@@ -673,7 +715,7 @@ class PersonaAPI:
                     'weight': up.weight,
                     'selected_at': up.selected_at.isoformat() if up.selected_at else None
                 }
-
+            
             return {
                 'personas': personas_by_category,
                 'total_selected': len(personas_by_category)

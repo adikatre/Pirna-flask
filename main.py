@@ -7,6 +7,7 @@ from flask.cli import AppGroup
 from flask_login import current_user, login_required
 from flask import current_app
 from dotenv import load_dotenv
+from api.api_ainpc import ainpc_api
 
 # import "objects" from "this" project
 from __init__ import app, db, login_manager  # Key Flask objects 
@@ -19,6 +20,8 @@ from api.section import section_api
 from api.persona_api import persona_api
 from api.skill_snapshot_api import skill_passport_api
 from api.pfp import pfp_api
+from api.FaceRecognitionApiController import face_recognition_api_blueprint
+
 from api.analytics import analytics_api
 from api.student import student_api
 from api.groq_api import groq_api
@@ -30,7 +33,6 @@ from api.data_export_import_api import data_export_import_api
 from api.leaderboard import dynamic_api, events_api
 from hacks.joke import joke_api  # Import the joke API blueprint
 from api.post import post_api  # Import the social media post API
-from api.snapshot_proxy import snapshot_proxy
 from api.FaceRecognitionApiController import face_recognition_api_blueprint
 #from api.announcement import announcement_api ##temporary revert
 
@@ -64,6 +66,9 @@ app.config['KASM_SERVER'] = os.getenv('KASM_SERVER')
 app.config['KASM_API_KEY'] = os.getenv('KASM_API_KEY')
 app.config['KASM_API_KEY_SECRET'] = os.getenv('KASM_API_KEY_SECRET')
 
+from flask_cors import CORS
+CORS(app)  # This allows all origins, your frontend can now call /api/ainpc/prompt
+
 
 
 # register URIs for api endpoints
@@ -74,11 +79,13 @@ app.register_blueprint(section_api)
 app.register_blueprint(persona_api)
 app.register_blueprint(skill_passport_api)
 app.register_blueprint(pfp_api) 
+app.register_blueprint(face_recognition_api_blueprint)
+ 
 app.register_blueprint(groq_api)
 app.register_blueprint(gemini_api)
 app.register_blueprint(ainpc_api)
 app.register_blueprint(microblog_api)
-
+app.register_blueprint(ainpc_api)
 app.register_blueprint(analytics_api)
 app.register_blueprint(student_api)
 # app.register_blueprint(grade_api)
@@ -90,7 +97,6 @@ app.register_blueprint(dynamic_api)  # Register the dynamic leaderboard API
 app.register_blueprint(events_api)  # Register the elementary leaderboard API
 app.register_blueprint(joke_api)  # Register the joke API blueprint
 app.register_blueprint(post_api)  # Register the social media post API
-app.register_blueprint(snapshot_proxy)  # Register the snapshot proxy API
 app.register_blueprint(face_recognition_api_blueprint)
 # app.register_blueprint(announcement_api) ##temporary revert
 
